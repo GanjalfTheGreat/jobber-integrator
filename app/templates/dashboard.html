@@ -4,20 +4,28 @@
 <h1>Price Sync</h1>
 <p class="muted">Sync your wholesaler CSV costs to Jobber Products &amp; Services.</p>
 
+{% if error %}
+<div class="card" style="border-left: 4px solid #f85149;">
+    <p><strong>Something went wrong:</strong> {{ error }}{% if error_message %} – {{ error_message }}{% endif %}</p>
+    <p class="muted">Check that JOBBER_CLIENT_ID and JOBBER_CLIENT_SECRET are set in .env and that your app’s OAuth Callback URL in the Jobber Developer Center matches <code>{{ base_url }}/oauth/callback</code>.</p>
+</div>
+{% endif %}
+
 <div class="card">
     {% if connected %}
     <p><strong>Connected</strong> to Jobber ({{ jobber_account_name or "your account" }}).</p>
     <p class="muted">Upload a CSV to update product costs. (Step 3+)</p>
+    <a href="/disconnect" class="btn" style="background: #30363d; margin-top: 0.5rem;">Disconnect</a>
     {% else %}
     <p>Connect your Jobber account to get started.</p>
-    <p class="muted">Step 2: OAuth will add a &quot;Connect to Jobber&quot; button that sends you to the Jobber marketplace flow; after authorizing, you’ll return here with your account linked.</p>
-    <a href="#" class="btn" style="pointer-events: none; opacity: 0.7;">Connect to Jobber (coming in Step 2)</a>
+    <p class="muted">You’ll be sent to Jobber to authorize this app, then returned here.</p>
+    <a href="/connect" class="btn">Connect to Jobber</a>
     {% endif %}
 </div>
 
 <div class="card">
     <h2 style="font-size: 1.1rem; margin-top: 0;">CSV format</h2>
-    <p class="muted">Your file should have columns: <code>Part_Num</code> (product name in Jobber) and <code>Trade_Cost</code> (unit cost). Upload will be available after OAuth is wired up.</p>
+    <p class="muted">Your file should have columns: <code>Part_Num</code> (product name in Jobber) and <code>Trade_Cost</code> (unit cost). Upload will be available in a later step.</p>
 </div>
 
 <p class="muted"><a href="{{ base_url }}/health">Health check</a></p>

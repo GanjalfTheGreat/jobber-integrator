@@ -5,3 +5,4 @@ __pycache__/
 venv/
 *.egg-info/
 app.db
+test_db.sqlite

@@ -67,7 +67,7 @@ def save_connection(
 ) -> None:
     """Insert or replace connection for this account."""
     import datetime
-    now = datetime.datetime.utcnow().isoformat() + "Z"
+    now = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
     conn = _get_connection()
     try:
         conn.execute(
