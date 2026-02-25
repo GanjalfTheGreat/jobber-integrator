@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Price Sync</h1>
+<p class="muted">Sync your wholesaler CSV costs to Jobber Products &amp; Services.</p>
+
+<div class="card">
+    {% if connected %}
+    <p><strong>Connected</strong> to Jobber ({{ jobber_account_name or "your account" }}).</p>
+    <p class="muted">Upload a CSV to update product costs. (Step 3+)</p>
+    {% else %}
+    <p>Connect your Jobber account to get started.</p>
+    <p class="muted">Step 2: OAuth will add a &quot;Connect to Jobber&quot; button that sends you to the Jobber marketplace flow; after authorizing, you’ll return here with your account linked.</p>
+    <a href="#" class="btn" style="pointer-events: none; opacity: 0.7;">Connect to Jobber (coming in Step 2)</a>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2 style="font-size: 1.1rem; margin-top: 0;">CSV format</h2>
+    <p class="muted">Your file should have columns: <code>Part_Num</code> (product name in Jobber) and <code>Trade_Cost</code> (unit cost). Upload will be available after OAuth is wired up.</p>
+</div>
+
+<p class="muted"><a href="{{ base_url }}/health">Health check</a></p>
+{% endblock %}
