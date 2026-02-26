@@ -1,10 +1,11 @@
 """
-FastAPI app for Price Sync (marketplace). Step 2: OAuth implemented.
+FastAPI app for Price Sync (marketplace). Step 2: OAuth. Step 3: token refresh.
 - GET /connect → redirect to Jobber authorize URL (state in cookie)
 - GET /oauth/callback → exchange code, store tokens, set account cookie, redirect dashboard
 - GET /dashboard → Manage App; shows connected state or Connect button
 - GET /disconnect → clear account cookie, redirect dashboard
 """
+import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -132,11 +133,23 @@ async def oauth_callback(request: Request):
             status_code=302,
         )
 
+    # Step 3: store expires_at if Jobber returns expires_in (for proactive refresh)
+    expires_at = None
+    if tokens.get("expires_in") is not None:
+        try:
+            expires_at = (
+                datetime.datetime.now(datetime.UTC)
+                + datetime.timedelta(seconds=int(tokens["expires_in"]))
+            ).isoformat().replace("+00:00", "Z")
+        except (TypeError, ValueError):
+            pass
+
     save_connection(
         jobber_account_id=account_id,
         jobber_account_name=account_name,
         access_token=access_token,
         refresh_token=refresh_token,
+        expires_at=expires_at,
     )
 
     response = RedirectResponse(url="/dashboard", status_code=302)

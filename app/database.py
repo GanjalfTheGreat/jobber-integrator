@@ -27,7 +27,7 @@ def _get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist. Step 3: add expires_at column if missing."""
     conn = _get_connection()
     try:
         conn.execute("""
@@ -42,6 +42,12 @@ def init_db() -> None:
             )
         """)
         conn.commit()
+        # Step 3: add optional expires_at for proactive refresh (migration)
+        try:
+            conn.execute("ALTER TABLE jobber_connections ADD COLUMN access_token_expires_at TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
     finally:
         conn.close()
 
@@ -64,8 +70,9 @@ def save_connection(
     jobber_account_name: str,
     access_token: str,
     refresh_token: str,
+    expires_at: str | None = None,
 ) -> None:
-    """Insert or replace connection for this account."""
+    """Insert or replace connection for this account. Step 3: optional expires_at."""
     import datetime
     now = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
     conn = _get_connection()
@@ -73,15 +80,40 @@ def save_connection(
         conn.execute(
             """
             INSERT INTO jobber_connections
-            (jobber_account_id, jobber_account_name, access_token, refresh_token, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (jobber_account_id, jobber_account_name, access_token, refresh_token, created_at, updated_at, access_token_expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(jobber_account_id) DO UPDATE SET
                 jobber_account_name = excluded.jobber_account_name,
                 access_token = excluded.access_token,
                 refresh_token = excluded.refresh_token,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                access_token_expires_at = excluded.access_token_expires_at
             """,
-            (jobber_account_id, jobber_account_name, access_token, refresh_token, now, now),
+            (jobber_account_id, jobber_account_name, access_token, refresh_token, now, now, expires_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_tokens(
+    jobber_account_id: str,
+    access_token: str,
+    refresh_token: str,
+    expires_at: str | None = None,
+) -> None:
+    """Step 3: Update only tokens (and optionally expires_at) for an existing connection."""
+    import datetime
+    now = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    conn = _get_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE jobber_connections
+            SET access_token = ?, refresh_token = ?, updated_at = ?, access_token_expires_at = ?
+            WHERE jobber_account_id = ?
+            """,
+            (access_token, refresh_token, now, expires_at, jobber_account_id),
         )
         conn.commit()
     finally:
