@@ -6,3 +6,5 @@ venv/
 *.egg-info/
 app.db
 test_db.sqlite
+*.log
+debug*.log

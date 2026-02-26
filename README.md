@@ -16,8 +16,9 @@ python sync_prices_to_jobber.py              # sync
 
 ## Web app (OAuth + token refresh)
 
-1. In [Jobber Developer Center](https://developer.getjobber.com/apps), open your app and set **OAuth Callback URL** to `http://localhost:8000/oauth/callback` (local) or `https://your-domain.com/oauth/callback` (production). Must match `BASE_URL` + `/oauth/callback`.
-2. In `.env` set `JOBBER_CLIENT_ID`, `JOBBER_CLIENT_SECRET`, and `BASE_URL=http://localhost:8000` (or your public URL).
+1. Copy `.env.example` to `.env` and fill in your values.
+2. In [Jobber Developer Center](https://developer.getjobber.com/apps), open your app and set **OAuth Callback URL** to `http://localhost:8000/oauth/callback` (local) or `https://your-domain.com/oauth/callback` (production). Must match `BASE_URL` + `/oauth/callback`.
+3. In `.env` set `JOBBER_CLIENT_ID`, `JOBBER_CLIENT_SECRET`, and `BASE_URL=http://localhost:8000` (or your public URL).
 
 ### Run the web app locally (PowerShell)
 
@@ -38,5 +39,15 @@ cd "c:\Users\reggin\Random Cursor Shit\Jobber Integrator"
 Then open [http://localhost:8000](http://localhost:8000) → **Connect to Jobber** → authorize → dashboard shows connected. Health: [http://localhost:8000/health](http://localhost:8000/health).
 
 **Test sync (verify cost + selling price mutation):** After connecting, run `python run_sync_check.py` (uses `wholesaler_prices.csv` with 25% markup), or open [http://localhost:8000/test-sync](http://localhost:8000/test-sync) and click **Run test sync**.
+
+## Tests
+
+Run the test suite before merging to `master` or deploying:
+
+```bash
+pytest
+```
+
+With the project venv: `.venv\Scripts\pytest` (Windows) or `.venv/bin/pytest` (Unix).
 
 See [MARKETPLACE_ROADMAP.md](MARKETPLACE_ROADMAP.md) for the full path to the marketplace.
