@@ -1,13 +1,18 @@
 """
-FastAPI app for Price Sync (marketplace). Step 2: OAuth. Step 3: token refresh. Step 4: sync API.
+FastAPI app for Price Sync (marketplace). Step 2: OAuth. Step 3: token refresh. Step 4: sync API. Step 6: webhook + disconnect.
 - GET /connect → redirect to Jobber authorize URL (state in cookie)
 - GET /oauth/callback → exchange code, store tokens, set account cookie, redirect dashboard
 - GET /dashboard → Manage App; shows connected state or Connect button
-- GET /disconnect → clear account cookie, redirect dashboard
+- GET /disconnect → call appDisconnect, clear account cookie, remove connection (Step 6)
+- POST /webhooks/jobber → Jobber disconnect webhook; verify HMAC, delete_connection (Step 6)
 - POST /api/sync → upload CSV, sync costs to Jobber (requires connected session)
 """
 import asyncio
+import base64
 import datetime
+import hmac
+import hashlib
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -25,10 +30,13 @@ from app.cookies import (
     generate_state,
 )
 from app.database import init_db, get_connection_by_account_id, save_connection, delete_connection
+from app.config import JOBBER_CLIENT_SECRET
 from app.jobber_oauth import (
     build_authorize_url,
+    call_app_disconnect,
     exchange_code_for_tokens,
     get_account_info,
+    get_valid_access_token,
 )
 from app.sync import parse_csv_from_bytes, run_sync
 
@@ -205,14 +213,52 @@ async def dashboard(request: Request):
 
 @app.get("/disconnect", response_class=RedirectResponse)
 async def disconnect(request: Request):
-    """Clear account session cookie and remove connection from DB; user sees Connect again."""
+    """Step 6: Call Jobber appDisconnect, then clear session and remove connection. Always clear local state even if API fails."""
     account_cookie = request.cookies.get(COOKIE_ACCOUNT)
     account_id = get_account_id_from_cookie(account_cookie)
     if account_id:
+        try:
+            token = await asyncio.to_thread(get_valid_access_token, account_id)
+            await asyncio.to_thread(call_app_disconnect, token)
+        except Exception:
+            pass  # e.g. token expired, already disconnected in Jobber; still clear local state
         delete_connection(account_id)
     response = RedirectResponse(url="/dashboard", status_code=302)
     response.delete_cookie(COOKIE_ACCOUNT)
     return response
+
+
+def _verify_jobber_webhook(body: bytes, signature_header: str | None) -> bool:
+    """Verify X-Jobber-Hmac-SHA256: HMAC-SHA256(client_secret, body) base64. Constant-time compare."""
+    if not JOBBER_CLIENT_SECRET or not signature_header:
+        return False
+    expected = base64.b64encode(
+        hmac.new(
+            JOBBER_CLIENT_SECRET.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).digest()
+    ).decode("ascii")
+    return hmac.compare_digest(expected, signature_header.strip())
+
+
+@app.post("/webhooks/jobber")
+async def webhook_jobber(request: Request):
+    """Step 6: Jobber disconnect webhook. Verify HMAC, parse topic/accountId, delete_connection. Return 200 quickly."""
+    body = await request.body()
+    signature = request.headers.get("X-Jobber-Hmac-SHA256")
+    if not _verify_jobber_webhook(body, signature):
+        return JSONResponse(status_code=401, content={"error": "Invalid signature"})
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+    event = (data.get("data") or {}).get("webHookEvent") or {}
+    topic = event.get("topic") or ""
+    account_id = event.get("accountId")
+    if topic.upper() == "APP_DISCONNECT" and account_id:
+        delete_connection(str(account_id))
+    return JSONResponse(status_code=200, content={"ok": True})
 
 
 @app.post("/api/sync")

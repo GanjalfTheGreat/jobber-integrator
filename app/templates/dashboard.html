@@ -5,7 +5,7 @@
 <p class="muted">Sync your wholesaler CSV costs to Jobber Products &amp; Services.</p>
 
 {% if error %}
-<div class="card" style="border-left: 4px solid #f85149;">
+<div class="card" style="border-left: 4px solid var(--color-critical);">
     <p><strong>Something went wrong:</strong> {{ error }}{% if error_message %} – {{ error_message }}{% endif %}</p>
     <p class="muted">Check that JOBBER_CLIENT_ID and JOBBER_CLIENT_SECRET are set in .env and that your app’s OAuth Callback URL in the Jobber Developer Center matches <code>{{ base_url }}/oauth/callback</code>.</p>
 </div>
@@ -14,8 +14,18 @@
 <div class="card">
     {% if connected %}
     <p><strong>Connected</strong> to Jobber ({{ jobber_account_name or "your account" }}).</p>
-    <p class="muted">Upload a CSV to update product costs. (Step 3+)</p>
-    <a href="/disconnect" class="btn" style="background: #30363d; margin-top: 0.5rem;">Disconnect</a>
+    <p class="muted">Upload a CSV to update product costs.</p>
+    <a href="/disconnect" class="btn btn--subtle" style="margin-top: 0.5rem;">Disconnect</a>
+
+    <div class="form-group" style="margin-top: var(--space-large);">
+        <form id="sync-form" enctype="multipart/form-data">
+            <label for="csv-file">CSV file</label>
+            <input type="file" id="csv-file" name="file" accept=".csv" required>
+            <button type="submit" class="btn" id="sync-btn" style="margin-top: var(--space-base);">Sync now</button>
+        </form>
+        <p id="sync-status" class="muted" style="margin-top: var(--space-small); display: none;">Syncing…</p>
+        <div id="sync-result" class="sync-result" style="display: none;" role="status"></div>
+    </div>
     {% else %}
     <p>Connect your Jobber account to get started.</p>
     <p class="muted">You’ll be sent to Jobber to authorize this app, then returned here.</p>
@@ -24,9 +34,69 @@
 </div>
 
 <div class="card">
-    <h2 style="font-size: 1.1rem; margin-top: 0;">CSV format</h2>
-    <p class="muted">Your file should have columns: <code>Part_Num</code> (product name in Jobber) and <code>Trade_Cost</code> (unit cost). Upload will be available in a later step.</p>
+    <h2>CSV format</h2>
+    <p class="muted">Your file should have columns: <code>Part_Num</code> (product name in Jobber) and <code>Trade_Cost</code> (unit cost).</p>
 </div>
+
+{% if connected %}
+<script>
+(function() {
+    var form = document.getElementById('sync-form');
+    var fileInput = document.getElementById('csv-file');
+    var btn = document.getElementById('sync-btn');
+    var status = document.getElementById('sync-status');
+    var resultEl = document.getElementById('sync-result');
+    if (!form) return;
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        if (!fileInput.files.length) return;
+        var fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        btn.disabled = true;
+        status.style.display = 'block';
+        resultEl.style.display = 'none';
+        resultEl.className = 'sync-result';
+        resultEl.textContent = '';
+        fetch('/api/sync', { method: 'POST', body: fd, credentials: 'same-origin' })
+            .then(function(r) { return r.json().then(function(d) { return { status: r.status, data: d }; }); })
+            .then(function(o) {
+                status.style.display = 'none';
+                btn.disabled = false;
+                resultEl.style.display = 'block';
+                var d = o.data;
+                if (d.error && o.status === 403) {
+                    resultEl.className = 'sync-result error';
+                    resultEl.innerHTML = '<strong>Error:</strong> ' + (d.error || 'Not connected.') + ' <a href="/connect">Connect to Jobber</a>';
+                    return;
+                }
+                if (d.error && d.updated === 0 && (!d.skus_not_found || !d.skus_not_found.length)) {
+                    resultEl.className = 'sync-result error';
+                    resultEl.textContent = d.error;
+                    return;
+                }
+                resultEl.className = 'sync-result success';
+                var msg = 'Updated ' + (d.updated || 0) + ' product(s).';
+                if (d.skus_not_found && d.skus_not_found.length) {
+                    msg += ' Not found in Jobber: ';
+                    msg += d.skus_not_found.slice(0, 20).join(', ');
+                    if (d.skus_not_found.length > 20) msg += ' (+' + (d.skus_not_found.length - 20) + ' more)';
+                    resultEl.innerHTML = '<p>' + msg + '</p><div class="skus-list">' + d.skus_not_found.map(function(s) { return '<span>' + s + '</span>'; }).join(', ') + '</div>';
+                } else {
+                    resultEl.textContent = msg;
+                }
+                if (d.error) resultEl.innerHTML = (resultEl.innerHTML || resultEl.textContent) + '<p class="muted" style="margin-top:8px;">' + d.error + '</p>';
+            })
+            .catch(function(err) {
+                status.style.display = 'none';
+                btn.disabled = false;
+                resultEl.style.display = 'block';
+                resultEl.className = 'sync-result error';
+                resultEl.textContent = 'Request failed: ' + (err.message || 'Please try again.');
+            });
+    });
+})();
+</script>
+{% endif %}
 
 <p class="muted"><a href="{{ base_url }}/health">Health check</a></p>
 {% endblock %}

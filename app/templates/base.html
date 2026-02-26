@@ -1,20 +1,34 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Price Sync{% endblock %} | Jobber</title>
+    <!-- Jobber Atlantis Design System (Step 5) -->
+    <link rel="stylesheet" href="https://unpkg.com/@jobber/design@0.90.1/dist/foundation.css" crossorigin="">
+    <link rel="stylesheet" href="https://unpkg.com/@jobber/design@0.90.1/dist/semantic.css" crossorigin="">
     <style>
-        :root { --bg: #0f1419; --card: #1a2332; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; }
         * { box-sizing: border-box; }
-        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; min-height: 100vh; padding: 2rem; }
+        body { margin: 0; min-height: 100vh; padding: var(--space-large); background-color: var(--color-surface--background); }
         .container { max-width: 640px; margin: 0 auto; }
-        h1 { font-size: 1.5rem; margin-top: 0; }
-        .card { background: var(--card); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
-        .muted { color: var(--muted); font-size: 0.9rem; }
-        a { color: var(--accent); }
-        .btn { display: inline-block; background: var(--accent); color: #fff; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; border: none; cursor: pointer; font-size: 0.95rem; }
+        h1 { font-size: var(--typography--fontSize-largest); font-family: var(--typography--fontFamily-display); color: var(--color-heading); margin: 0 0 var(--space-base); }
+        h2 { font-size: var(--typography--fontSize-large); color: var(--color-heading); margin: 0 0 var(--space-small); }
+        .card { background: var(--color-surface); border-radius: var(--radius-base); padding: var(--space-large); margin-bottom: var(--space-base); box-shadow: var(--shadow-base); border: 1px solid var(--color-border); }
+        .muted { color: var(--color-text--secondary); font-size: var(--typography--fontSize-small); }
+        a { color: var(--color-interactive); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .btn { display: inline-block; background: var(--color-interactive); color: var(--color-text--reverse); padding: var(--space-small) var(--space-base); border-radius: var(--radius-small); border: none; cursor: pointer; font-size: var(--typography--fontSize-base); font-family: inherit; font-weight: 500; }
+        .btn:hover { background: var(--color-interactive--hover); }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn--subtle { background: var(--color-interactive--subtle); color: var(--color-text--reverse); }
+        .btn--subtle:hover { background: var(--color-interactive--subtle--hover); }
+        .form-group { margin-bottom: var(--space-base); }
+        .form-group label { display: block; margin-bottom: var(--space-smaller); font-weight: 500; color: var(--color-text); }
+        input[type="file"] { font-size: var(--typography--fontSize-base); color: var(--color-text); }
+        .sync-result { margin-top: var(--space-base); padding: var(--space-base); border-radius: var(--radius-small); }
+        .sync-result.success { background: var(--color-success--surface); color: var(--color-success--onSurface); }
+        .sync-result.error { background: var(--color-critical--surface); color: var(--color-critical--onSurface); }
+        .sync-result .skus-list { font-size: var(--typography--fontSize-small); margin-top: var(--space-small); max-height: 120px; overflow-y: auto; }
     </style>
 </head>
 <body>

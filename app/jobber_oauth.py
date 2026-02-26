@@ -14,6 +14,9 @@ JOBBER_GRAPHQL_URL = "https://api.getjobber.com/api/graphql"
 JOBBER_GRAPHQL_VERSION = "2026-02-17"
 ACCOUNT_QUERY = "query { account { id name } }"
 
+# Step 6: tell Jobber to mark the app as disconnected for this account
+APP_DISCONNECT_MUTATION = "mutation { appDisconnect { success userErrors { message } } }"
+
 # Step 3: refresh when token expires within this many seconds
 REFRESH_BUFFER_SECONDS = 120
 
@@ -147,3 +150,28 @@ def build_authorize_url(redirect_uri: str, state: str) -> str:
         "state": state,
     }
     return "https://api.getjobber.com/api/oauth/authorize?" + urllib.parse.urlencode(params)
+
+
+def call_app_disconnect(access_token: str) -> None:
+    """
+    Step 6: Call Jobber's appDisconnect mutation so Jobber marks the app as disconnected.
+    Uses the given access_token (for the account to disconnect). Raises on HTTP/GraphQL error.
+    """
+    response = requests.post(
+        JOBBER_GRAPHQL_URL,
+        json={"query": APP_DISCONNECT_MUTATION},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "X-JOBBER-GRAPHQL-VERSION": JOBBER_GRAPHQL_VERSION,
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if data.get("errors"):
+        raise ValueError(data["errors"][0].get("message", "GraphQL error"))
+    result = (data.get("data") or {}).get("appDisconnect")
+    if result and result.get("userErrors"):
+        msg = result["userErrors"][0].get("message", "appDisconnect failed")
+        raise ValueError(msg)
