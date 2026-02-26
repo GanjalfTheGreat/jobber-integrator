@@ -100,6 +100,17 @@ def test_dashboard_connected_has_sync_form(client):
     assert 'id="sync-result"' in r.text
 
 
+def test_dashboard_connected_has_preview_and_preview_result(client):
+    """Enhancement 3: when connected, dashboard has Preview button and preview-result area."""
+    cookie = _get_connected_cookie(client)
+    r = client.get("/dashboard", cookies={"price_sync_account": cookie})
+    assert r.status_code == 200
+    assert "Preview" in r.text
+    assert 'id="preview-btn"' in r.text
+    assert 'id="preview-result"' in r.text
+    assert "/api/sync/preview" in r.text
+
+
 def test_dashboard_connected_has_disconnect(client):
     """Step 5: when connected, Disconnect link is present."""
     cookie = _get_connected_cookie(client)
@@ -139,7 +150,7 @@ def test_api_sync_json_has_updated_skus_not_found_error(client):
     save_connection("acc-ui", "UI Test", "at", "rt")
     cookie = make_account_cookie_value("acc-ui")
     with patch("app.main.run_sync") as mock_run:
-        mock_run.return_value = {"updated": 2, "skus_not_found": ["X"], "error": None}
+        mock_run.return_value = {"updated": 2, "skus_not_found": ["X"], "skipped_protected": 0, "error": None}
         r = client.post(
             "/api/sync",
             files={"file": ("p.csv", b"Part_Num,Trade_Cost\nA,1\nB,2")},
@@ -150,5 +161,6 @@ def test_api_sync_json_has_updated_skus_not_found_error(client):
     assert "updated" in data
     assert "skus_not_found" in data
     assert "error" in data
+    assert "skipped_protected" in data
     assert data["updated"] == 2
     assert data["skus_not_found"] == ["X"]

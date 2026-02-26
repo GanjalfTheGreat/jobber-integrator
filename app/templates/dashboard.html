@@ -21,9 +21,17 @@
         <form id="sync-form" enctype="multipart/form-data">
             <label for="csv-file">CSV file</label>
             <input type="file" id="csv-file" name="file" accept=".csv" required>
+            <div class="form-group" style="margin-top: var(--space-small);">
+                <label style="display: flex; align-items: center; gap: var(--space-small); cursor: pointer;">
+                    <input type="checkbox" id="only-increase-cost" name="only_increase_cost" value="true">
+                    <span>Only update costs when the new price is higher (never lower)</span>
+                </label>
+            </div>
+            <button type="button" class="btn btn--subtle" id="preview-btn" style="margin-top: var(--space-base); margin-right: var(--space-small);">Preview</button>
             <button type="submit" class="btn" id="sync-btn" style="margin-top: var(--space-base);">Sync now</button>
         </form>
         <p id="sync-status" class="muted" style="margin-top: var(--space-small); display: none;">Syncing…</p>
+        <div id="preview-result" class="card sync-result" style="display: none; margin-top: var(--space-base);" role="status"></div>
         <div id="sync-result" class="sync-result" style="display: none;" role="status"></div>
     </div>
     {% else %}
@@ -44,14 +52,13 @@
     var form = document.getElementById('sync-form');
     var fileInput = document.getElementById('csv-file');
     var btn = document.getElementById('sync-btn');
+    var previewBtn = document.getElementById('preview-btn');
     var status = document.getElementById('sync-status');
     var resultEl = document.getElementById('sync-result');
+    var previewEl = document.getElementById('preview-result');
     if (!form) return;
-    form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        if (!fileInput.files.length) return;
-        var fd = new FormData();
-        fd.append('file', fileInput.files[0]);
+
+    function doSync(fd, then) {
         btn.disabled = true;
         status.style.display = 'block';
         resultEl.style.display = 'none';
@@ -59,33 +66,7 @@
         resultEl.textContent = '';
         fetch('/api/sync', { method: 'POST', body: fd, credentials: 'same-origin' })
             .then(function(r) { return r.json().then(function(d) { return { status: r.status, data: d }; }); })
-            .then(function(o) {
-                status.style.display = 'none';
-                btn.disabled = false;
-                resultEl.style.display = 'block';
-                var d = o.data;
-                if (d.error && o.status === 403) {
-                    resultEl.className = 'sync-result error';
-                    resultEl.innerHTML = '<strong>Error:</strong> ' + (d.error || 'Not connected.') + ' <a href="/connect">Connect to Jobber</a>';
-                    return;
-                }
-                if (d.error && d.updated === 0 && (!d.skus_not_found || !d.skus_not_found.length)) {
-                    resultEl.className = 'sync-result error';
-                    resultEl.textContent = d.error;
-                    return;
-                }
-                resultEl.className = 'sync-result success';
-                var msg = 'Updated ' + (d.updated || 0) + ' product(s).';
-                if (d.skus_not_found && d.skus_not_found.length) {
-                    msg += ' Not found in Jobber: ';
-                    msg += d.skus_not_found.slice(0, 20).join(', ');
-                    if (d.skus_not_found.length > 20) msg += ' (+' + (d.skus_not_found.length - 20) + ' more)';
-                    resultEl.innerHTML = '<p>' + msg + '</p><div class="skus-list">' + d.skus_not_found.map(function(s) { return '<span>' + s + '</span>'; }).join(', ') + '</div>';
-                } else {
-                    resultEl.textContent = msg;
-                }
-                if (d.error) resultEl.innerHTML = (resultEl.innerHTML || resultEl.textContent) + '<p class="muted" style="margin-top:8px;">' + d.error + '</p>';
-            })
+            .then(then)
             .catch(function(err) {
                 status.style.display = 'none';
                 btn.disabled = false;
@@ -93,6 +74,84 @@
                 resultEl.className = 'sync-result error';
                 resultEl.textContent = 'Request failed: ' + (err.message || 'Please try again.');
             });
+    }
+
+    function showSyncResult(o) {
+        status.style.display = 'none';
+        btn.disabled = false;
+        resultEl.style.display = 'block';
+        var d = o.data;
+        if (d.error && o.status === 403) {
+            resultEl.className = 'sync-result error';
+            resultEl.innerHTML = '<strong>Error:</strong> ' + (d.error || 'Not connected.') + ' <a href="/connect">Connect to Jobber</a>';
+            return;
+        }
+        if (d.error && d.updated === 0 && (!d.skus_not_found || !d.skus_not_found.length)) {
+            resultEl.className = 'sync-result error';
+            resultEl.textContent = d.error;
+            return;
+        }
+        resultEl.className = 'sync-result success';
+        var updated = d.updated || 0, skipped = d.skipped_protected || 0, nf = (d.skus_not_found && d.skus_not_found.length) ? d.skus_not_found.length : 0;
+        var parts = [];
+        if (updated > 0) parts.push(updated + ' cost(s) updated in Jobber.');
+        if (skipped > 0) parts.push(skipped + ' skipped (new cost was not higher than current).');
+        if (nf > 0) parts.push(nf + ' item(s) from your file didn\'t match any product in Jobber.');
+        var msg = parts.length ? parts.join(' ') : 'No changes made.';
+        if (nf > 0) {
+            resultEl.innerHTML = '<p>' + msg + '</p><p class="muted" style="margin-top: var(--space-small); margin-bottom: var(--space-smaller);">Unmatched names from your CSV:</p><div class="skus-list">' + d.skus_not_found.map(function(s) { return '<span>' + s + '</span>'; }).join(', ') + '</div>';
+        } else {
+            resultEl.innerHTML = '<p>' + msg + '</p>';
+        }
+        if (d.error) resultEl.innerHTML = resultEl.innerHTML + '<p class="muted" style="margin-top:8px;">' + d.error + '</p>';
+    }
+
+    if (previewBtn) {
+        previewBtn.addEventListener('click', function() {
+            if (!fileInput.files.length) return;
+            var fd = new FormData();
+            fd.append('file', fileInput.files[0]);
+            previewEl.style.display = 'none';
+            previewEl.innerHTML = '<p class="muted">Loading preview…</p>';
+            previewEl.style.display = 'block';
+            fetch('/api/sync/preview', { method: 'POST', body: fd, credentials: 'same-origin' })
+                .then(function(r) { return r.json().then(function(d) { return { status: r.status, data: d }; }); })
+                .then(function(o) {
+                    var d = o.data;
+                    if (d.error && o.status === 403) {
+                        previewEl.innerHTML = '<p class="sync-result error"><strong>Error:</strong> ' + (d.error || 'Not connected.') + ' <a href="/connect">Connect to Jobber</a></p>';
+                        return;
+                    }
+                    if (d.error && !d.increases && !d.decreases && !d.unchanged && (!d.skus_not_found || !d.skus_not_found.length)) {
+                        previewEl.innerHTML = '<p class="sync-result error">' + (d.error || 'Preview failed.') + '</p>';
+                        return;
+                    }
+                    var inc = d.increases || 0, dec = d.decreases || 0, unc = d.unchanged || 0, nf = (d.skus_not_found && d.skus_not_found.length) ? d.skus_not_found.length : 0;
+                    var msg = 'This will <strong>increase</strong> ' + inc + ' cost(s), <strong>decrease</strong> ' + dec + ', and leave ' + unc + ' unchanged in Jobber.';
+                    if (nf) msg += ' ' + nf + ' item(s) from your file have no matching product in Jobber and will be skipped.';
+                    previewEl.innerHTML = '<p>' + msg + '</p><p style="margin-top: var(--space-base);"><button type="button" class="btn" id="apply-btn">Apply changes</button> <button type="button" class="btn btn--subtle" id="preview-cancel-btn">Cancel</button></p>';
+                    document.getElementById('preview-cancel-btn').onclick = function() { previewEl.style.display = 'none'; };
+                    document.getElementById('apply-btn').onclick = function() {
+                        var applyFd = new FormData();
+                        applyFd.append('file', fileInput.files[0]);
+                        if (document.getElementById('only-increase-cost').checked) applyFd.append('only_increase_cost', 'true');
+                        previewEl.style.display = 'none';
+                        doSync(applyFd, function(o) { showSyncResult(o); });
+                    };
+                })
+                .catch(function(err) {
+                    previewEl.innerHTML = '<p class="sync-result error">Preview failed: ' + (err.message || 'Please try again.') + '</p>';
+                });
+        });
+    }
+
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        if (!fileInput.files.length) return;
+        var fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        if (document.getElementById('only-increase-cost').checked) fd.append('only_increase_cost', 'true');
+        doSync(fd, function(o) { showSyncResult(o); });
     });
 })();
 </script>

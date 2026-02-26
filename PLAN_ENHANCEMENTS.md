@@ -12,17 +12,16 @@ This document nails down **how** to implement each of the five enhancements. No 
 
 ---
 
-## 1. Duplicate protection (match by SKU or name; update only)
+## 1. Duplicate protection (match by SKU or name; update only) ✅ Implemented
 
 ### Goal
 
 - Keep the rule: **only update existing products, never create new rows.**
 - Optionally match by **SKU/code** when Jobber exposes it, with **name** as fallback so we still work for accounts that don’t use SKU.
 
-### Current state
+### Current state (after implementation)
 
-- We already **only update** (no new rows).
-- We match by **name** only; we do not read or match by SKU.
+- We **only update** (no new rows). We **probe** at sync start: query with `code`; if no GraphQL errors we match CSV `Part_Num` to `product.code` first, then `product.name`. If the schema doesn't support `code`, we use name-only. See `app/sync.py`: `QUERY_PRODUCTS_PAGE_WITH_CODE`, `_probe_code_available()`, `_find_id_by_sku(..., match_by_code_first)`.
 
 ### What we need from Jobber
 
@@ -50,22 +49,22 @@ This document nails down **how** to implement each of the five enhancements. No 
    - Multiple products with same name: we currently take the first match when paginating. Document this. If we add SKU, same rule: first SKU match wins.
    - Empty or null SKU in Jobber: treat as “no SKU match”, fall back to name.
 
-5. **Deliverables**
-   - Updated GraphQL query (with optional SKU field).
+5. **Deliverables** (done)
+   - QUERY_PRODUCTS_PAGE_WITH_CODE, probe, _find_id_by_sku(match_by_code_first); tests in test_step4_sync.py.
    - One matching function: `(csv_part_num, jobber_products_list) -> product_id | None` with logic “SKU match else name match”.
    - Tests: match by SKU when present, fallback to name, and name-only when SKU not in schema.
 
 ---
 
-## 2. Price protection (only update if new cost is higher)
+## 2. Price protection (only update if new cost is higher) ✅ Implemented
 
 ### Goal
 
 - **Option:** “Only update cost when the new cost is **greater than** the current cost in Jobber.” So we never overwrite with a lower number (protects against accidental drops).
 
-### Current state
+### Current state (after implementation)
 
-- We always set `internalUnitCost` to the CSV value. We never read the current cost from Jobber.
+- Queries include `internalUnitCost`; `_find_id_by_sku` returns `(id, current_cost)`. When `only_increase_cost=True`, we skip update when `new_cost <= current_cost` and count in `skipped_protected`. Null/zero current cost: we update. API accepts form `only_increase_cost`; UI has checkbox and shows “Skipped (price protection): Y”.
 
 ### What we need from Jobber
 
@@ -104,9 +103,9 @@ This document nails down **how** to implement each of the five enhancements. No 
 - **Preview step:** Before applying changes, show a summary such as: “You are about to **increase** N prices and **decrease** M prices. Z unchanged. Confirm to apply.”
 - User can then **Confirm** (run the real sync) or **Cancel**.
 
-### Current state
+### Current state (after implementation)
 
-- No preview. Upload → Sync now → done.
+- `POST /api/sync/preview` accepts CSV file; returns `{increases, decreases, unchanged, skus_not_found, error}`. No writes. `run_sync_preview(account_id, rows)` reuses same matching and token/probe as sync. Dashboard: Preview button, preview result with summary and "Apply changes" / "Cancel"; Apply sends same file to `/api/sync`.
 
 ### What we need from Jobber
 

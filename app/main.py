@@ -16,7 +16,7 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
-from fastapi import FastAPI, Request, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -38,7 +38,7 @@ from app.jobber_oauth import (
     get_account_info,
     get_valid_access_token,
 )
-from app.sync import parse_csv_from_bytes, run_sync
+from app.sync import parse_csv_from_bytes, run_sync, run_sync_preview
 
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templates")
 
@@ -261,9 +261,9 @@ async def webhook_jobber(request: Request):
     return JSONResponse(status_code=200, content={"ok": True})
 
 
-@app.post("/api/sync")
-async def api_sync(request: Request, file: UploadFile = File(...)):
-    """Step 4: Sync CSV to Jobber. Requires connected session. CSV columns: Part_Num, Trade_Cost."""
+@app.post("/api/sync/preview")
+async def api_sync_preview(request: Request, file: UploadFile = File(...)):
+    """Enhancement 3: Preview only. Returns increases/decreases/unchanged and skus_not_found. No writes."""
     account_cookie = request.cookies.get(COOKIE_ACCOUNT)
     account_id = get_account_id_from_cookie(account_cookie)
     if not account_id:
@@ -284,7 +284,41 @@ async def api_sync(request: Request, file: UploadFile = File(...)):
         rows = parse_csv_from_bytes(content)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    result = await asyncio.to_thread(run_sync, account_id, rows)
+    result = await asyncio.to_thread(run_sync_preview, account_id, rows)
+    if result.get("error") and not result.get("skus_not_found") and result.get("increases", 0) == 0 and result.get("decreases", 0) == 0 and result.get("unchanged", 0) == 0:
+        return JSONResponse(status_code=403, content=result)
+    return result
+
+
+@app.post("/api/sync")
+async def api_sync(
+    request: Request,
+    file: UploadFile = File(...),
+    only_increase_cost: str | None = Form(None),
+):
+    """Step 4: Sync CSV to Jobber. Requires connected session. CSV columns: Part_Num, Trade_Cost. Enhancement 2: only_increase_cost=true to skip when new cost <= current."""
+    account_cookie = request.cookies.get(COOKIE_ACCOUNT)
+    account_id = get_account_id_from_cookie(account_cookie)
+    if not account_id:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Not connected; please connect to Jobber first."},
+        )
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Please upload a CSV file."},
+        )
+    try:
+        content = await file.read()
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    try:
+        rows = parse_csv_from_bytes(content)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    only_increase = only_increase_cost and str(only_increase_cost).strip().lower() in ("true", "1", "yes")
+    result = await asyncio.to_thread(run_sync, account_id, rows, only_increase)
     if result.get("error") and result["updated"] == 0 and not result.get("skus_not_found"):
         return JSONResponse(status_code=403, content=result)
     return result
