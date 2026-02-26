@@ -66,10 +66,10 @@ mutation UpdateProductCost($productOrServiceId: EncodedId!, $internalUnitCost: F
 }
 """
 
-# Enhancement 5: same mutation with unit price (selling price). Field name per Jobber schema; verify in GraphiQL.
+# Enhancement 5: same mutation with selling price. ProductOrService schema uses defaultUnitCost for "default price".
 MUTATION_UPDATE_COST_AND_PRICE = """
-mutation UpdateProductCostAndPrice($productOrServiceId: EncodedId!, $internalUnitCost: Float!, $unitPrice: Float!) {
-  productsAndServicesEdit(productOrServiceId: $productOrServiceId, input: { internalUnitCost: $internalUnitCost, unitPrice: $unitPrice }) {
+mutation UpdateProductCostAndPrice($productOrServiceId: EncodedId!, $internalUnitCost: Float!, $defaultUnitCost: Float!) {
+  productsAndServicesEdit(productOrServiceId: $productOrServiceId, input: { internalUnitCost: $internalUnitCost, defaultUnitCost: $defaultUnitCost }) {
     productOrService {
       id
     }
@@ -370,11 +370,11 @@ def _update_cost_and_price(
     cost: float,
     unit_price: float,
 ) -> bool:
-    """Enhancement 5: Set internalUnitCost and unitPrice (selling price) in one call. Raises TokenExpiredError on 401."""
+    """Enhancement 5: Set internalUnitCost and defaultUnitCost (selling price) in one call. Raises TokenExpiredError on 401."""
     variables = {
         "productOrServiceId": node_id,
         "internalUnitCost": cost,
-        "unitPrice": round(unit_price, 2),
+        "defaultUnitCost": round(unit_price, 2),
     }
     resp = _graphql_request(session, headers, MUTATION_UPDATE_COST_AND_PRICE, variables)
     if resp.status_code == 401:

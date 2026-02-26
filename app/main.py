@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import BASE_URL, JOBBER_CLIENT_ID
+from app.config import BASE_URL, JOBBER_CLIENT_ID, PROJECT_ROOT
 from app.cookies import (
     COOKIE_ACCOUNT,
     COOKIE_OAUTH_STATE,
@@ -353,6 +353,44 @@ async def api_sync(
     if result.get("error") and result["updated"] == 0 and not result.get("skus_not_found"):
         return JSONResponse(status_code=403, content=result)
     return result
+
+
+def _is_dev_server() -> bool:
+    """True when BASE_URL is localhost (test sync routes enabled only in dev)."""
+    return "localhost" in BASE_URL.lower()
+
+
+@app.post("/api/sync/test-run")
+async def api_sync_test_run(request: Request):
+    """Test sync using wholesaler_prices.csv from project root, 25%% markup. Enabled only when BASE_URL contains localhost."""
+    if not _is_dev_server():
+        return JSONResponse(status_code=404, content={"error": "Not available in production."})
+    account_cookie = request.cookies.get(COOKIE_ACCOUNT)
+    account_id = get_account_id_from_cookie(account_cookie)
+    if not account_id:
+        return JSONResponse(status_code=403, content={"error": "Not connected; please connect to Jobber first."})
+    csv_path = PROJECT_ROOT / "wholesaler_prices.csv"
+    if not csv_path.is_file():
+        return JSONResponse(status_code=400, content={"error": f"CSV not found: {csv_path}"})
+    try:
+        rows = parse_csv_from_bytes(csv_path.read_bytes())
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    result = await asyncio.to_thread(
+        run_sync, account_id, rows, only_increase_cost=False, fuzzy_match=False, markup_percent=25.0
+    )
+    return result
+
+
+@app.get("/test-sync", response_class=HTMLResponse)
+async def test_sync_page(request: Request):
+    """Page with one button to run test sync (wholesaler_prices.csv, 25%% markup). Enabled only when BASE_URL contains localhost."""
+    if not _is_dev_server():
+        return RedirectResponse(url="/dashboard", status_code=302)
+    account_cookie = request.cookies.get(COOKIE_ACCOUNT)
+    if not get_account_id_from_cookie(account_cookie):
+        return RedirectResponse(url="/dashboard", status_code=302)
+    return templates.TemplateResponse("test_sync.html", {"request": request})
 
 
 @app.get("/health")

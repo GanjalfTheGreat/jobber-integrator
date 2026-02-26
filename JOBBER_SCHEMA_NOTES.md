@@ -14,9 +14,9 @@ This file documents schema assumptions used by the Price Sync app. Verify in [Gr
 
 ### Unit price (selling price) – Enhancement 5
 
-- **Assumption:** The same `productsAndServicesEdit` input accepts a field for the selling/unit price. We use **`unitPrice`** (Float).
-- If your schema uses a different name (e.g. `price`, `sellingPrice`) or a separate mutation, update `app/sync.py`: `MUTATION_UPDATE_COST_AND_PRICE` and the variables passed to the mutation.
-- We send both `internalUnitCost` and `unitPrice` in one call when markup % is set; formula: `unitPrice = cost * (1 + markup_percent/100)`, rounded to 2 decimals.
+- **Verified:** The `ProductOrService` type in Jobber’s schema uses **`defaultUnitCost`** (Float!) for “A product or service has a default price” (selling price). The same field name is used in the `productsAndServicesEdit` mutation input.
+- We send both `internalUnitCost` and `defaultUnitCost` in one call when markup % is set; formula: `defaultUnitCost = cost * (1 + markup_percent/100)`, rounded to 2 decimals.
+- If a future API version renames this field, update `app/sync.py`: `MUTATION_UPDATE_COST_AND_PRICE` and the variables in `_update_cost_and_price`.
 
 ## Version
 

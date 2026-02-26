@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Test Sync{% endblock %}
+{% block content %}
+<h1>Test sync</h1>
+<p class="muted">Runs sync using <code>wholesaler_prices.csv</code> with 25% markup (verifies defaultUnitCost mutation).</p>
+<div class="card">
+    <button type="button" class="btn" id="run-test-sync-btn">Run test sync</button>
+    <p id="test-sync-status" class="muted" style="margin-top: var(--space-small); display: none;">Syncing…</p>
+    <pre id="test-sync-result" role="status" style="margin-top: var(--space-base); display: none; padding: var(--space-base); background: var(--color-surface--background); border-radius: var(--radius-small); overflow: auto;"></pre>
+</div>
+<p class="muted"><a href="/dashboard">Back to dashboard</a></p>
+<script>
+(function() {
+    var btn = document.getElementById('run-test-sync-btn');
+    var status = document.getElementById('test-sync-status');
+    var resultEl = document.getElementById('test-sync-result');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+        btn.disabled = true;
+        status.style.display = 'block';
+        resultEl.style.display = 'none';
+        resultEl.textContent = '';
+        fetch('/api/sync/test-run', { method: 'POST', credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                status.style.display = 'none';
+                btn.disabled = false;
+                resultEl.style.display = 'block';
+                resultEl.textContent = JSON.stringify(d, null, 2);
+            })
+            .catch(function(err) {
+                status.style.display = 'none';
+                btn.disabled = false;
+                resultEl.style.display = 'block';
+                resultEl.textContent = 'Request failed: ' + (err.message || 'Unknown error');
+            });
+    });
+})();
+</script>
+{% endblock %}

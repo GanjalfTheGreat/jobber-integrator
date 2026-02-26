@@ -37,4 +37,6 @@ cd "c:\Users\reggin\Random Cursor Shit\Jobber Integrator"
 
 Then open [http://localhost:8000](http://localhost:8000) → **Connect to Jobber** → authorize → dashboard shows connected. Health: [http://localhost:8000/health](http://localhost:8000/health).
 
+**Test sync (verify cost + selling price mutation):** After connecting, run `python run_sync_check.py` (uses `wholesaler_prices.csv` with 25% markup), or open [http://localhost:8000/test-sync](http://localhost:8000/test-sync) and click **Run test sync**.
+
 See [MARKETPLACE_ROADMAP.md](MARKETPLACE_ROADMAP.md) for the full path to the marketplace.

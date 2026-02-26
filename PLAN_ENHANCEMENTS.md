@@ -209,15 +209,15 @@ This document nails down **how** to implement each of the five enhancements. No 
 
 ### Current state (after implementation)
 
-- **Mutation:** `MUTATION_UPDATE_COST_AND_PRICE` sends `internalUnitCost` and `unitPrice` in one `productsAndServicesEdit` call. Field name `unitPrice` (see `JOBBER_SCHEMA_NOTES.md`; verify in GraphiQL).
+- **Mutation:** `MUTATION_UPDATE_COST_AND_PRICE` sends `internalUnitCost` and `defaultUnitCost` (selling price) in one `productsAndServicesEdit` call. Field name `defaultUnitCost` per Jobber schema (see `JOBBER_SCHEMA_NOTES.md`).
 - **Formula:** `unit_price = round(cost * (1 + markup_percent/100), 2)`. When `markup_percent` is 0 or not provided, we only update cost (existing mutation). When price protection skips the cost update, we do not set unit price for that row.
 - **API:** `POST /api/sync` accepts form `markup_percent` (optional; 0 = cost only). Result includes `markup_percent` (echo of value used).
 - **UI:** “Markup %” number input (0–500, step 0.5); empty/0 = cost only. Success message: “N cost(s) and unit prices updated (unit price = cost + X% markup).” when markup > 0.
 
 ### What we need from Jobber
 
-- **Schema discovery:** The mutation or type that has `internalUnitCost` likely has a field for selling price—e.g. `unitPrice`, `price`, or similar. We need the **exact field name** and whether it’s in the same `productsAndServicesEdit` input or a different mutation (e.g. “set price”).
-   - Check: `productsAndServicesEdit` input type (or the product type) for a price/selling-price field. If it’s the same mutation, we send both `internalUnitCost` and `unitPrice` (or whatever it’s called) in one call. If separate mutation, we do cost update then price update (two calls per product, more rate-limit impact).
+- **Schema discovery:** The mutation or type that has `internalUnitCost` likely has a field for selling price—e.g. selling price. **Done:** we use `defaultUnitCost` (see JOBBER_SCHEMA_NOTES.md). The exact field name and whether it’s in the same `productsAndServicesEdit` input or a different mutation (e.g. “set price”).
+   - Check: `productsAndServicesEdit` input type (or the product type) for a price/selling-price field. If it’s the same mutation, we send both `internalUnitCost` and `defaultUnitCost` in one call. If separate mutation, we do cost update then price update (two calls per product, more rate-limit impact).
 
 ### Implementation plan
 
@@ -227,7 +227,7 @@ This document nails down **how** to implement each of the five enhancements. No 
 2. **Backend**
    - **Input:** Markup percentage from the user. Stored in request body or form: e.g. `markup_percent: 25` means “Unit Price = Cost × 1.25”.
    - **Formula:** For each row: `cost = Trade_Cost` from CSV. `unit_price = cost * (1 + markup_percent / 100)`. Round to 2 decimals (or Jobber’s required precision).
-   - **Mutation:** If Jobber accepts both in one call: one mutation with `internalUnitCost: cost` and `unitPrice: unit_price` (or the actual field name). If two mutations: first update cost, then update price (same product id); respect rate limits.
+   - **Mutation:** One mutation with `internalUnitCost: cost` and `defaultUnitCost: unit_price` (selling price). Implemented in `app/sync.py`.
    - **Optional:** “Only set unit price when updating cost” (i.e. if price protection skips the cost update, we might skip the price update for that row too). Decide and document.
 
 3. **UI**
