@@ -11,25 +11,25 @@ You’re ready for Step 4. Steps 1–3 (shell, OAuth, token refresh) are done.
 
 ## Checklist
 
-- [ ] **Extract or reuse sync building blocks**
+- [x] **Extract or reuse sync building blocks**
   - CSV parsing: columns `Part_Num` (product name in Jobber) and `Trade_Cost` (unit cost). Reuse logic from `sync_prices_to_jobber.py` (`load_and_clean_csv` style) or move it into a shared module (e.g. `app/sync.py` or `app/csv_sync.py`).
   - GraphQL: same `productOrServices` query (paginate by name) and `productsAndServicesEdit` mutation (`internalUnitCost`). Reuse query/mutation strings and request helpers; keep `X-JOBBER-GRAPHQL-VERSION: 2026-02-17` (or current version).
   - Rate limiting: keep the same delay (e.g. 0.5s) between Jobber API calls.
 
-- [ ] **Use per-account token (Step 3)**
+- [x] **Use per-account token (Step 3)**
   - For the connected user, get `account_id` from the session cookie (same as dashboard).
   - Call `get_valid_access_token(account_id)` to get a valid access token before running sync (and, if you do multiple requests, use the same token for the run; refresh on 401 and retry that request once).
 
-- [ ] **Handle 401 during sync**
+- [x] **Handle 401 during sync**
   - If a Jobber GraphQL request returns 401: call `refresh_access_token(refresh_token)` then `update_tokens(account_id, ...)`, then retry that request once with the new token. If refresh fails, return an error (e.g. “Session expired; please reconnect to Jobber”).
 
-- [ ] **Define sync result shape**
+- [x] **Define sync result shape**
   - Return a simple result the UI (Step 5) can show: e.g. `{ "updated": number, "skus_not_found": ["SKU1", "SKU2", ...], "errors": optional_message }`. Match what the CLI effectively produces (count updated + list of SKUs not found).
 
-- [ ] **Expose sync in the backend**
+- [x] **Expose sync in the backend**
   - Add an endpoint or function that accepts CSV contents (or an uploaded file) + `account_id`: e.g. `POST /api/sync` or `POST /sync` that reads the session cookie for `account_id`, parses the CSV, runs the sync loop using the token (with 401 refresh/retry), and returns the result as JSON. Require the user to be connected (valid session); otherwise return 401/403.
 
-- [ ] **Optional: keep CLI working**
+- [x] **Optional: keep CLI working**
   - The existing `sync_prices_to_jobber.py` can stay as-is for single-account CLI use. If you prefer one implementation, move the core sync logic into a shared module and have both the CLI and the web app call it (CLI still uses `JOBBER_ACCESS_TOKEN` from env; web app uses `get_valid_access_token(account_id)`).
 
 ## References

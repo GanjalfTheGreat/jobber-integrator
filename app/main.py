@@ -1,16 +1,18 @@
 """
-FastAPI app for Price Sync (marketplace). Step 2: OAuth. Step 3: token refresh.
+FastAPI app for Price Sync (marketplace). Step 2: OAuth. Step 3: token refresh. Step 4: sync API.
 - GET /connect → redirect to Jobber authorize URL (state in cookie)
 - GET /oauth/callback → exchange code, store tokens, set account cookie, redirect dashboard
 - GET /dashboard → Manage App; shows connected state or Connect button
 - GET /disconnect → clear account cookie, redirect dashboard
+- POST /api/sync → upload CSV, sync costs to Jobber (requires connected session)
 """
+import asyncio
 import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.config import BASE_URL, JOBBER_CLIENT_ID
@@ -28,6 +30,7 @@ from app.jobber_oauth import (
     exchange_code_for_tokens,
     get_account_info,
 )
+from app.sync import parse_csv_from_bytes, run_sync
 
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templates")
 
@@ -210,6 +213,35 @@ async def disconnect(request: Request):
     response = RedirectResponse(url="/dashboard", status_code=302)
     response.delete_cookie(COOKIE_ACCOUNT)
     return response
+
+
+@app.post("/api/sync")
+async def api_sync(request: Request, file: UploadFile = File(...)):
+    """Step 4: Sync CSV to Jobber. Requires connected session. CSV columns: Part_Num, Trade_Cost."""
+    account_cookie = request.cookies.get(COOKIE_ACCOUNT)
+    account_id = get_account_id_from_cookie(account_cookie)
+    if not account_id:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Not connected; please connect to Jobber first."},
+        )
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Please upload a CSV file."},
+        )
+    try:
+        content = await file.read()
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    try:
+        rows = parse_csv_from_bytes(content)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    result = await asyncio.to_thread(run_sync, account_id, rows)
+    if result.get("error") and result["updated"] == 0 and not result.get("skus_not_found"):
+        return JSONResponse(status_code=403, content=result)
+    return result
 
 
 @app.get("/health")
