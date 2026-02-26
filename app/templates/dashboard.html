@@ -27,6 +27,16 @@
                     <span>Only update costs when the new price is higher (never lower)</span>
                 </label>
             </div>
+            <div class="form-group" style="margin-top: var(--space-small);">
+                <label style="display: flex; align-items: center; gap: var(--space-small); cursor: pointer;">
+                    <input type="checkbox" id="fuzzy-match" name="fuzzy_match" value="true">
+                    <span>Fuzzy matching (match similar product names; use with care and review results)</span>
+                </label>
+            </div>
+            <div class="form-group" style="margin-top: var(--space-small);">
+                <label for="markup-percent">Markup % (set unit price = cost × (1 + markup); 0 = cost only)</label>
+                <input type="number" id="markup-percent" name="markup_percent" min="0" max="500" step="0.5" value="" placeholder="0" style="width: 6rem;">
+            </div>
             <button type="button" class="btn btn--subtle" id="preview-btn" style="margin-top: var(--space-base); margin-right: var(--space-small);">Preview</button>
             <button type="submit" class="btn" id="sync-btn" style="margin-top: var(--space-base);">Sync now</button>
         </form>
@@ -43,7 +53,7 @@
 
 <div class="card">
     <h2>CSV format</h2>
-    <p class="muted">Your file should have columns: <code>Part_Num</code> (product name in Jobber) and <code>Trade_Cost</code> (unit cost).</p>
+    <p class="muted">Your file should have columns: <code>Part_Num</code> (product name in Jobber) and <code>Trade_Cost</code> (unit cost). An optional <code>Description</code> column is shown in the preview to help you confirm which product is which.</p>
 </div>
 
 {% if connected %}
@@ -92,12 +102,17 @@
             return;
         }
         resultEl.className = 'sync-result success';
-        var updated = d.updated || 0, skipped = d.skipped_protected || 0, nf = (d.skus_not_found && d.skus_not_found.length) ? d.skus_not_found.length : 0;
+        var updated = d.updated || 0, skipped = d.skipped_protected || 0, nf = (d.skus_not_found && d.skus_not_found.length) ? d.skus_not_found.length : 0, fuzzy = d.fuzzy_matched_count || 0, markup = d.markup_percent || 0;
         var parts = [];
-        if (updated > 0) parts.push(updated + ' cost(s) updated in Jobber.');
+        if (updated > 0) {
+            if (markup > 0) parts.push(updated + ' cost(s) and unit prices updated in Jobber (unit price = cost + ' + markup + '% markup).');
+            else parts.push(updated + ' cost(s) updated in Jobber.');
+        }
         if (skipped > 0) parts.push(skipped + ' skipped (new cost was not higher than current).');
+        if (fuzzy > 0) parts.push(fuzzy + ' matched using fuzzy matching.');
         if (nf > 0) parts.push(nf + ' item(s) from your file didn\'t match any product in Jobber.');
-        var msg = parts.length ? parts.join(' ') : 'No changes made.';
+        if (parts.length === 0) parts.push('No changes made.');
+        var msg = parts.join(' ');
         if (nf > 0) {
             resultEl.innerHTML = '<p>' + msg + '</p><p class="muted" style="margin-top: var(--space-small); margin-bottom: var(--space-smaller);">Unmatched names from your CSV:</p><div class="skus-list">' + d.skus_not_found.map(function(s) { return '<span>' + s + '</span>'; }).join(', ') + '</div>';
         } else {
@@ -108,10 +123,11 @@
 
     if (previewBtn) {
         previewBtn.addEventListener('click', function() {
-            if (!fileInput.files.length) return;
-            var fd = new FormData();
-            fd.append('file', fileInput.files[0]);
-            previewEl.style.display = 'none';
+        if (!fileInput.files.length) return;
+        var fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        if (document.getElementById('fuzzy-match').checked) fd.append('fuzzy_match', 'true');
+        previewEl.style.display = 'none';
             previewEl.innerHTML = '<p class="muted">Loading preview…</p>';
             previewEl.style.display = 'block';
             fetch('/api/sync/preview', { method: 'POST', body: fd, credentials: 'same-origin' })
@@ -126,15 +142,39 @@
                         previewEl.innerHTML = '<p class="sync-result error">' + (d.error || 'Preview failed.') + '</p>';
                         return;
                     }
-                    var inc = d.increases || 0, dec = d.decreases || 0, unc = d.unchanged || 0, nf = (d.skus_not_found && d.skus_not_found.length) ? d.skus_not_found.length : 0;
+                    var inc = d.increases || 0, dec = d.decreases || 0, unc = d.unchanged || 0, nf = (d.skus_not_found && d.skus_not_found.length) ? d.skus_not_found.length : 0, fuzzy = d.fuzzy_matched_count || 0;
                     var msg = 'This will <strong>increase</strong> ' + inc + ' cost(s), <strong>decrease</strong> ' + dec + ', and leave ' + unc + ' unchanged in Jobber.';
+                    if (fuzzy) msg += ' ' + fuzzy + ' match(es) use fuzzy matching.';
                     if (nf) msg += ' ' + nf + ' item(s) from your file have no matching product in Jobber and will be skipped.';
-                    previewEl.innerHTML = '<p>' + msg + '</p><p style="margin-top: var(--space-base);"><button type="button" class="btn" id="apply-btn">Apply changes</button> <button type="button" class="btn btn--subtle" id="preview-cancel-btn">Cancel</button></p>';
+                    var markupInput = document.getElementById('markup-percent');
+                    if (markupInput && markupInput.value !== '' && parseFloat(markupInput.value) > 0) msg += ' <strong>Unit prices will be set to cost + ' + markupInput.value + '% markup</strong> for each product updated.';
+                    var detailHtml = '';
+                    function fmtRow(item) {
+                        var line = item.part_num + ' — CSV ' + item.csv_cost + ', current ' + item.current_cost;
+                        var sub = [];
+                        if (item.description) sub.push(item.description);
+                        if (item.jobber_name && item.jobber_name !== item.part_num) sub.push('Jobber: ' + item.jobber_name);
+                        if (sub.length) line += '<br><span class="muted" style="font-size: 0.9em;">' + sub.join(' · ') + '</span>';
+                        return line;
+                    }
+                    if (d.increases_detail && d.increases_detail.length) {
+                        detailHtml += '<p class="muted" style="margin-top: var(--space-small); margin-bottom: var(--space-smaller);"><strong>Increases:</strong></p><ul class="skus-list" style="margin-top: 0;">' + d.increases_detail.map(function(it) { return '<li>' + fmtRow(it) + '</li>'; }).join('') + '</ul>';
+                    }
+                    if (d.decreases_detail && d.decreases_detail.length) {
+                        detailHtml += '<p class="muted" style="margin-top: var(--space-small); margin-bottom: var(--space-smaller);"><strong>Decreases:</strong></p><ul class="skus-list" style="margin-top: 0;">' + d.decreases_detail.map(function(it) { return '<li>' + fmtRow(it) + '</li>'; }).join('') + '</ul>';
+                    }
+                    if (d.unchanged_detail && d.unchanged_detail.length) {
+                        detailHtml += '<p class="muted" style="margin-top: var(--space-small); margin-bottom: var(--space-smaller);"><strong>Unchanged:</strong></p><ul class="skus-list" style="margin-top: 0;">' + d.unchanged_detail.map(function(it) { return '<li>' + fmtRow(it) + '</li>'; }).join('') + '</ul>';
+                    }
+                    previewEl.innerHTML = '<p>' + msg + '</p>' + detailHtml + '<p style="margin-top: var(--space-base);"><button type="button" class="btn" id="apply-btn">Apply changes</button> <button type="button" class="btn btn--subtle" id="preview-cancel-btn">Cancel</button></p>';
                     document.getElementById('preview-cancel-btn').onclick = function() { previewEl.style.display = 'none'; };
                     document.getElementById('apply-btn').onclick = function() {
                         var applyFd = new FormData();
                         applyFd.append('file', fileInput.files[0]);
                         if (document.getElementById('only-increase-cost').checked) applyFd.append('only_increase_cost', 'true');
+                        if (document.getElementById('fuzzy-match').checked) applyFd.append('fuzzy_match', 'true');
+                        var markupInput = document.getElementById('markup-percent');
+                        if (markupInput && markupInput.value !== '' && parseFloat(markupInput.value) >= 0) applyFd.append('markup_percent', markupInput.value);
                         previewEl.style.display = 'none';
                         doSync(applyFd, function(o) { showSyncResult(o); });
                     };
@@ -151,6 +191,9 @@
         var fd = new FormData();
         fd.append('file', fileInput.files[0]);
         if (document.getElementById('only-increase-cost').checked) fd.append('only_increase_cost', 'true');
+        if (document.getElementById('fuzzy-match').checked) fd.append('fuzzy_match', 'true');
+        var markupInput = document.getElementById('markup-percent');
+        if (markupInput && markupInput.value !== '' && parseFloat(markupInput.value) >= 0) fd.append('markup_percent', markupInput.value);
         doSync(fd, function(o) { showSyncResult(o); });
     });
 })();

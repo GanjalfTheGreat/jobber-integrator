@@ -22,6 +22,9 @@ from app.sync import (
     run_sync_preview,
     _probe_code_available,
     _find_id_by_sku,
+    _normalize,
+    _fuzzy_score,
+    _resolve_from_list,
 )
 
 
@@ -35,14 +38,14 @@ def test_parse_csv_from_bytes_valid():
     """Step 4: parse CSV with Part_Num and Trade_Cost."""
     csv = b"Part_Num,Trade_Cost\nSKU1,10.50\nSKU2,20"
     rows = parse_csv_from_bytes(csv)
-    assert rows == [("SKU1", 10.5), ("SKU2", 20.0)]
+    assert rows == [("SKU1", 10.5, ""), ("SKU2", 20.0, "")]
 
 
 def test_parse_csv_from_bytes_utf8_bom():
     """Step 4: parse CSV with UTF-8 BOM."""
     csv = "\ufeffPart_Num,Trade_Cost\nA,1.0".encode("utf-8")
     rows = parse_csv_from_bytes(csv)
-    assert rows == [("A", 1.0)]
+    assert rows == [("A", 1.0, "")]
 
 
 def test_parse_csv_from_bytes_missing_columns_raises():
@@ -118,13 +121,13 @@ def test_api_sync_success_returns_result(client):
     mock_run.assert_called_once()
     call_args = mock_run.call_args[0]
     assert call_args[0] == "acc-sync-ok"
-    assert call_args[1] == [("ProductA", 99.99)]
+    assert call_args[1] == [("ProductA", 99.99, "")]
 
 
 def test_run_sync_no_connection_returns_error():
     """Step 4: run_sync with no DB connection returns error in result."""
     init_db()
-    result = run_sync("nonexistent-account", [("SKU1", 10.0)])
+    result = run_sync("nonexistent-account", [("SKU1", 10.0, "")])
     assert result["error"] is not None
     assert "connect" in result["error"].lower()
     assert result["updated"] == 0
@@ -170,8 +173,8 @@ def test_find_id_by_sku_name_only_matches_name():
         }
     }
     with patch("app.sync._graphql_request", return_value=mock_resp):
-        assert _find_id_by_sku(session, headers, "ProductA", match_by_code_first=False) == ("enc-123", 10.0)
-        assert _find_id_by_sku(session, headers, "Other", match_by_code_first=False) == (None, None)
+        assert _find_id_by_sku(session, headers, "ProductA", match_by_code_first=False) == ("enc-123", 10.0, "ProductA")
+        assert _find_id_by_sku(session, headers, "Other", match_by_code_first=False) == (None, None, "")
 
 
 def test_find_id_by_sku_code_first_matches_code_then_name():
@@ -192,9 +195,9 @@ def test_find_id_by_sku_code_first_matches_code_then_name():
         }
     }
     with patch("app.sync._graphql_request", return_value=mock_resp):
-        assert _find_id_by_sku(session, headers, "COP15-3M", match_by_code_first=True) == ("enc-by-code", 8.45)
-        assert _find_id_by_sku(session, headers, "NoCodeProduct", match_by_code_first=True) == ("enc-by-name", None)
-        assert _find_id_by_sku(session, headers, "NotFound", match_by_code_first=True) == (None, None)
+        assert _find_id_by_sku(session, headers, "COP15-3M", match_by_code_first=True) == ("enc-by-code", 8.45, "15mm Copper Tube 3m")
+        assert _find_id_by_sku(session, headers, "NoCodeProduct", match_by_code_first=True) == ("enc-by-name", None, "NoCodeProduct")
+        assert _find_id_by_sku(session, headers, "NotFound", match_by_code_first=True) == (None, None, "")
 
 
 # ---- Enhancement 2: price protection (only update if new cost higher) ----
@@ -206,8 +209,8 @@ def test_run_sync_only_increase_cost_skips_when_new_lower_or_equal():
     with patch("app.sync._probe_code_available", return_value=False):
         with patch("app.sync._find_id_by_sku") as mock_find:
             with patch("app.sync._update_unit_cost") as mock_update:
-                mock_find.return_value = ("id-1", 10.0)  # current cost 10
-                result = run_sync("acc-e2", [("SKU1", 5.0), ("SKU2", 10.0)], only_increase_cost=True)
+                mock_find.return_value = ("id-1", 10.0, "")  # current cost 10
+                result = run_sync("acc-e2", [("SKU1", 5.0, ""), ("SKU2", 10.0, "")], only_increase_cost=True)
     assert result["updated"] == 0
     assert result["skipped_protected"] == 2  # 5 <= 10, 10 <= 10
     mock_update.assert_not_called()
@@ -221,8 +224,8 @@ def test_run_sync_only_increase_cost_updates_when_new_higher():
     with patch("app.sync._probe_code_available", return_value=False):
         with patch("app.sync._find_id_by_sku") as mock_find:
             with patch("app.sync._update_unit_cost", return_value=True) as mock_update:
-                mock_find.return_value = ("id-1", 10.0)
-                result = run_sync("acc-e2b", [("SKU1", 15.0)], only_increase_cost=True)
+                mock_find.return_value = ("id-1", 10.0, "")
+                result = run_sync("acc-e2b", [("SKU1", 15.0, "")], only_increase_cost=True)
     assert result["updated"] == 1
     assert result["skipped_protected"] == 0
     mock_update.assert_called_once()
@@ -259,16 +262,16 @@ def test_run_sync_preview_returns_increases_decreases_unchanged():
     with patch("app.sync._probe_code_available", return_value=False):
         with patch("app.sync._find_id_by_sku") as mock_find:
             mock_find.side_effect = [
-                ("id-1", 5.0),   # cost 10 > 5 -> increase
-                ("id-2", 20.0),  # cost 15 < 20 -> decrease
-                ("id-3", 7.0),   # cost 7 == 7 -> unchanged
-                (None, None),    # not found
+                ("id-1", 5.0, "Product A"),   # cost 10 > 5 -> increase
+                ("id-2", 20.0, "Product B"),  # cost 15 < 20 -> decrease
+                ("id-3", 7.0, "Product C"),   # cost 7 == 7 -> unchanged
+                (None, None, ""),    # not found
             ]
             result = run_sync_preview("acc-prev", [
-                ("A", 10.0),
-                ("B", 15.0),
-                ("C", 7.0),
-                ("D", 1.0),
+                ("A", 10.0, ""),
+                ("B", 15.0, ""),
+                ("C", 7.0, ""),
+                ("D", 1.0, ""),
             ])
     assert result["increases"] == 1
     assert result["decreases"] == 1
@@ -280,7 +283,7 @@ def test_run_sync_preview_returns_increases_decreases_unchanged():
 def test_run_sync_preview_no_connection_returns_error():
     """Enhancement 3: run_sync_preview with no account returns error."""
     init_db()
-    result = run_sync_preview("nonexistent", [("X", 1.0)])
+    result = run_sync_preview("nonexistent", [("X", 1.0, "")])
     assert result["error"] is not None
     assert result["increases"] == 0
     assert result["decreases"] == 0
@@ -313,3 +316,194 @@ def test_api_sync_preview_returns_counts(client):
     assert data["decreases"] == 1
     assert data["unchanged"] == 0
     assert data["skus_not_found"] == ["Z"]
+
+
+# ---- Enhancement 4: fuzzy matching ----
+def test_normalize_lowercase_collapse_whitespace():
+    """Enhancement 4: _normalize lowercases and collapses whitespace."""
+    assert _normalize("  Copper   Pipe  1/2in  ") == "copper pipe 1/2in"
+    assert _normalize("ABC") == "abc"
+    assert _normalize("") == ""
+
+
+def test_fuzzy_score_exact_and_similar():
+    """Enhancement 4: _fuzzy_score returns 1.0 for identical (normalized), high for similar."""
+    assert _fuzzy_score("Copper Pipe 1/2in", "Copper Pipe 1/2in") == 1.0
+    assert _fuzzy_score("1/2 Copper Pipe", "Copper Pipe 1/2in") > 0.8
+    assert _fuzzy_score("Something Else", "Copper Pipe") < 0.5
+
+
+def test_resolve_from_list_exact_normalized():
+    """Enhancement 4: _resolve_from_list finds exact match with normalized comparison."""
+    products = [
+        {"id": "id-1", "name": "  Copper  Pipe  ", "code": "", "internalUnitCost": 10.0},
+    ]
+    id_, cost, fuzzy, _ = _resolve_from_list("copper pipe", products, False, exact_only=True, fuzzy_threshold=0.9)
+    assert id_ == "id-1"
+    assert cost == 10.0
+    assert fuzzy is False
+
+
+def test_resolve_from_list_fuzzy_above_threshold():
+    """Enhancement 4: when exact fails and fuzzy on, best match above threshold returns (id, cost, True)."""
+    products = [
+        {"id": "id-1", "name": "Copper Pipe 1/2 inch", "code": "", "internalUnitCost": 5.0},
+        {"id": "id-2", "name": "Steel Bolt", "code": "", "internalUnitCost": 1.0},
+    ]
+    id_, cost, fuzzy, _ = _resolve_from_list("1/2 Copper Pipe", products, False, exact_only=False, fuzzy_threshold=0.8)
+    assert id_ == "id-1"
+    assert cost == 5.0
+    assert fuzzy is True
+
+
+def test_resolve_from_list_below_threshold_not_found():
+    """Enhancement 4: when best score below threshold, returns (None, None, False)."""
+    products = [
+        {"id": "id-1", "name": "Steel Bolt", "code": "", "internalUnitCost": 1.0},
+    ]
+    id_, cost, fuzzy, _ = _resolve_from_list("Copper Pipe XYZ", products, False, exact_only=False, fuzzy_threshold=0.95)
+    assert id_ is None
+    assert cost is None
+    assert fuzzy is False
+
+
+def test_resolve_from_list_tie_not_matched():
+    """Enhancement 4: when two products tie for best score above threshold, do not match (ambiguous)."""
+    # Two products with same name -> same fuzzy score for a typo; tie -> no match
+    products = [
+        {"id": "id-1", "name": "Pipe A", "code": "", "internalUnitCost": 1.0},
+        {"id": "id-2", "name": "Pipe A", "code": "", "internalUnitCost": 2.0},
+    ]
+    id_, cost, fuzzy, _ = _resolve_from_list("Pipes A", products, False, exact_only=False, fuzzy_threshold=0.5)
+    assert id_ is None
+    assert fuzzy is False
+
+
+def test_run_sync_fuzzy_off_returns_fuzzy_matched_count_zero():
+    """Enhancement 4: run_sync with fuzzy_match=False returns fuzzy_matched_count 0 (unchanged path)."""
+    from app.database import save_connection
+    init_db()
+    save_connection("acc-foff", "F", "at", "rt")
+    with patch("app.sync._probe_code_available", return_value=False):
+        with patch("app.sync._find_id_by_sku") as mock_find:
+            mock_find.return_value = ("id-1", 5.0, "")
+            with patch("app.sync._update_unit_cost", return_value=True):
+                result = run_sync("acc-foff", [("SKU1", 10.0, "")], only_increase_cost=False, fuzzy_match=False)
+    assert result.get("fuzzy_matched_count", 0) == 0
+    assert result["updated"] == 1
+
+
+def test_run_sync_fuzzy_on_returns_fuzzy_matched_count():
+    """Enhancement 4: run_sync with fuzzy_match=True uses product list and reports fuzzy_matched_count."""
+    from app.database import save_connection
+    init_db()
+    save_connection("acc-fon", "F", "at", "rt")
+    products = [
+        {"id": "enc-1", "name": "Copper Pipe 1/2in", "code": "", "internalUnitCost": 10.0},
+    ]
+    with patch("app.sync._probe_code_available", return_value=False):
+        with patch("app.sync._fetch_all_products", return_value=products):
+            with patch("app.sync._update_unit_cost", return_value=True):
+                result = run_sync(
+                    "acc-fon",
+                    [("1/2 Copper Pipe", 12.0, "")],  # fuzzy match to "Copper Pipe 1/2in"
+                    fuzzy_match=True,
+                    fuzzy_threshold=0.8,
+                )
+    assert result["updated"] == 1
+    assert result.get("fuzzy_matched_count") == 1
+    assert result["error"] is None
+
+
+def test_run_sync_preview_fuzzy_returns_fuzzy_matched_count():
+    """Enhancement 4: run_sync_preview with fuzzy_match=True returns fuzzy_matched_count."""
+    from app.database import save_connection
+    init_db()
+    save_connection("acc-pf", "P", "at", "rt")
+    products = [
+        {"id": "enc-1", "name": "Widget A", "code": "", "internalUnitCost": 5.0},
+    ]
+    with patch("app.sync._probe_code_available", return_value=False):
+        with patch("app.sync._fetch_all_products", return_value=products):
+            result = run_sync_preview(
+                "acc-pf",
+                [("Widget  A", 6.0, "")],  # normalized exact match, so fuzzy_used=False
+                fuzzy_match=True,
+                fuzzy_threshold=0.9,
+            )
+    assert result["increases"] == 1
+    assert result.get("fuzzy_matched_count") == 0  # exact normalized match
+    assert result["error"] is None
+
+
+# ---- Enhancement 5: markup calculator ----
+def test_run_sync_markup_zero_uses_cost_only():
+    """Enhancement 5: run_sync with markup_percent=0 uses cost-only mutation."""
+    from app.database import save_connection
+    init_db()
+    save_connection("acc-m0", "M", "at", "rt")
+    with patch("app.sync._probe_code_available", return_value=False):
+        with patch("app.sync._find_id_by_sku") as mock_find:
+            mock_find.return_value = ("id-1", 5.0, "")
+            with patch("app.sync._update_unit_cost", return_value=True) as mock_cost:
+                with patch("app.sync._update_cost_and_price", return_value=True) as mock_cost_price:
+                    result = run_sync("acc-m0", [("SKU1", 10.0, "")], markup_percent=0)
+    assert result["updated"] == 1
+    assert result.get("markup_percent") == 0
+    mock_cost.assert_called_once()
+    mock_cost_price.assert_not_called()
+
+
+def test_run_sync_markup_sets_cost_and_price():
+    """Enhancement 5: run_sync with markup_percent>0 calls _update_cost_and_price with correct unit_price."""
+    from app.database import save_connection
+    init_db()
+    save_connection("acc-m25", "M", "at", "rt")
+    with patch("app.sync._probe_code_available", return_value=False):
+        with patch("app.sync._find_id_by_sku") as mock_find:
+            mock_find.return_value = ("id-1", 5.0, "")
+            with patch("app.sync._update_unit_cost", return_value=True) as mock_cost:
+                with patch("app.sync._update_cost_and_price", return_value=True) as mock_cost_price:
+                    result = run_sync("acc-m25", [("SKU1", 10.0, "")], markup_percent=25)
+    assert result["updated"] == 1
+    assert result.get("markup_percent") == 25
+    mock_cost.assert_not_called()
+    mock_cost_price.assert_called_once()
+    # _update_cost_and_price(session, headers, node_id, cost, unit_price); unit_price = 10 * 1.25 = 12.5
+    args = mock_cost_price.call_args[0]
+    assert args[2] == "id-1"
+    assert args[3] == 10.0
+    assert args[4] == 12.5
+
+
+def test_run_sync_result_includes_markup_percent():
+    """Enhancement 5: run_sync result always includes markup_percent."""
+    from app.database import save_connection
+    init_db()
+    save_connection("acc-mr", "M", "at", "rt")
+    with patch("app.sync._probe_code_available", return_value=False):
+        with patch("app.sync._find_id_by_sku", return_value=(None, None, "")):
+            result = run_sync("acc-mr", [("X", 1.0, "")], markup_percent=10)
+    assert "markup_percent" in result
+    assert result["markup_percent"] == 10
+
+
+def test_api_sync_accepts_markup_percent(client):
+    """Enhancement 5: POST /api/sync with markup_percent form calls run_sync with markup."""
+    from app.cookies import make_account_cookie_value
+    from app.database import save_connection
+    save_connection("acc-api-m", "M", "at", "rt")
+    cookie = make_account_cookie_value("acc-api-m")
+    with patch("app.main.run_sync") as mock_run:
+        mock_run.return_value = {"updated": 1, "skus_not_found": [], "skipped_protected": 0, "fuzzy_matched_count": 0, "markup_percent": 20, "error": None}
+        r = client.post(
+            "/api/sync",
+            files={"file": ("p.csv", b"Part_Num,Trade_Cost\nA,10")},
+            data={"markup_percent": "20"},
+            cookies={"price_sync_account": cookie},
+        )
+    assert r.status_code == 200
+    assert r.json().get("markup_percent") == 20
+    mock_run.assert_called_once()
+    # run_sync(account_id, rows, only_increase, fuzzy_on, fuzzy_t, markup)
+    assert mock_run.call_args[0][5] == 20

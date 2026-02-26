@@ -96,7 +96,7 @@ This document nails down **how** to implement each of the five enhancements. No 
 
 ---
 
-## 3. Audit log / preview (“You are about to increase x and decrease y”)
+## 3. Audit log / preview (“You are about to increase x and decrease y”) ✅ Implemented
 
 ### Goal
 
@@ -144,15 +144,23 @@ This document nails down **how** to implement each of the five enhancements. No 
 
 ---
 
-## 4. Fuzzy matching (“Copper Pipe 1/2in” vs “1/2 Copper Pipe”)
+## 4. Fuzzy matching (“Copper Pipe 1/2in” vs “1/2 Copper Pipe”) ✅ Implemented
 
 ### Goal
 
 - When **exact** match fails, optionally try **fuzzy** match so small wording differences still match one Jobber product (e.g. “Copper Pipe 1/2in” ↔ “1/2 Copper Pipe”).
 
-### Current state
+### Current state (after implementation)
 
-- Match is exact: `Jobber name.strip() == Part_Num.strip()`.
+- **Normalize:** `_normalize(s)` lowercases and collapses whitespace; used for exact and fuzzy.
+- **Fuzzy:** `_fuzzy_score(a, b)` uses token-sort then `difflib.SequenceMatcher.ratio()`. `_resolve_from_list(sku, products, match_by_code_first, exact_only, fuzzy_threshold)` tries exact (normalized code/name) first; if not exact_only, picks best match above threshold and returns only if unique (no tie).
+- **Sync/preview:** When `fuzzy_match=True`, we call `_fetch_all_products` once then resolve each row with `_resolve_from_list`; result includes `fuzzy_matched_count`. Default off. Threshold 0.9 (configurable via form; 0–1 clamped).
+- **UI:** “Fuzzy matching” checkbox (default off), copy: “use with care and review results”. Sync and preview results show “N matched using fuzzy matching” when > 0.
+- **Edge cases:** Tie (two products with same best score) → no match; below threshold → not found. Exact behaviour unchanged when fuzzy off.
+
+### Previous state (before implementation)
+
+- Match was exact: `Jobber name.strip() == Part_Num.strip()`.
 
 ### Implementation plan
 
@@ -191,7 +199,7 @@ This document nails down **how** to implement each of the five enhancements. No 
 
 ---
 
-## 5. Markup calculator (update cost, then set Unit Price = Cost + x%)
+## 5. Markup calculator (update cost, then set Unit Price = Cost + x%) ✅ Implemented
 
 ### Goal
 
@@ -199,9 +207,12 @@ This document nails down **how** to implement each of the five enhancements. No 
 - User sets a **markup** (e.g. “+25%”).
 - App: (1) updates **internalUnitCost** from CSV, (2) sets **Unit Price** (selling price) = cost × (1 + markup).
 
-### Current state
+### Current state (after implementation)
 
-- We only set `internalUnitCost`. We never read or write “Unit Price” (selling price).
+- **Mutation:** `MUTATION_UPDATE_COST_AND_PRICE` sends `internalUnitCost` and `unitPrice` in one `productsAndServicesEdit` call. Field name `unitPrice` (see `JOBBER_SCHEMA_NOTES.md`; verify in GraphiQL).
+- **Formula:** `unit_price = round(cost * (1 + markup_percent/100), 2)`. When `markup_percent` is 0 or not provided, we only update cost (existing mutation). When price protection skips the cost update, we do not set unit price for that row.
+- **API:** `POST /api/sync` accepts form `markup_percent` (optional; 0 = cost only). Result includes `markup_percent` (echo of value used).
+- **UI:** “Markup %” number input (0–500, step 0.5); empty/0 = cost only. Success message: “N cost(s) and unit prices updated (unit price = cost + X% markup).” when markup > 0.
 
 ### What we need from Jobber
 

@@ -261,9 +261,24 @@ async def webhook_jobber(request: Request):
     return JSONResponse(status_code=200, content={"ok": True})
 
 
+def _parse_fuzzy_form(fuzzy_match: str | None, fuzzy_threshold: str | None) -> tuple[bool, float]:
+    """Enhancement 4: Parse fuzzy_match and fuzzy_threshold from form."""
+    on = fuzzy_match and str(fuzzy_match).strip().lower() in ("true", "1", "yes")
+    try:
+        t = float(fuzzy_threshold or "0.9") if fuzzy_threshold is not None else 0.9
+    except (TypeError, ValueError):
+        t = 0.9
+    return (on, max(0.0, min(1.0, t)))
+
+
 @app.post("/api/sync/preview")
-async def api_sync_preview(request: Request, file: UploadFile = File(...)):
-    """Enhancement 3: Preview only. Returns increases/decreases/unchanged and skus_not_found. No writes."""
+async def api_sync_preview(
+    request: Request,
+    file: UploadFile = File(...),
+    fuzzy_match: str | None = Form(None),
+    fuzzy_threshold: str | None = Form(None),
+):
+    """Enhancement 3: Preview only. Enhancement 4: fuzzy_match / fuzzy_threshold."""
     account_cookie = request.cookies.get(COOKIE_ACCOUNT)
     account_id = get_account_id_from_cookie(account_cookie)
     if not account_id:
@@ -284,10 +299,21 @@ async def api_sync_preview(request: Request, file: UploadFile = File(...)):
         rows = parse_csv_from_bytes(content)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    result = await asyncio.to_thread(run_sync_preview, account_id, rows)
+    fuzzy_on, fuzzy_t = _parse_fuzzy_form(fuzzy_match, fuzzy_threshold)
+    result = await asyncio.to_thread(run_sync_preview, account_id, rows, fuzzy_on, fuzzy_t)
     if result.get("error") and not result.get("skus_not_found") and result.get("increases", 0) == 0 and result.get("decreases", 0) == 0 and result.get("unchanged", 0) == 0:
         return JSONResponse(status_code=403, content=result)
     return result
+
+
+def _parse_markup_percent(markup_percent: str | None) -> float:
+    """Enhancement 5: Parse markup_percent from form; 0 = off."""
+    if markup_percent is None or not str(markup_percent).strip():
+        return 0.0
+    try:
+        return max(0.0, float(markup_percent))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 @app.post("/api/sync")
@@ -295,8 +321,11 @@ async def api_sync(
     request: Request,
     file: UploadFile = File(...),
     only_increase_cost: str | None = Form(None),
+    fuzzy_match: str | None = Form(None),
+    fuzzy_threshold: str | None = Form(None),
+    markup_percent: str | None = Form(None),
 ):
-    """Step 4: Sync CSV to Jobber. Requires connected session. CSV columns: Part_Num, Trade_Cost. Enhancement 2: only_increase_cost=true to skip when new cost <= current."""
+    """Step 4: Sync CSV to Jobber. Enhancement 2: only_increase_cost. Enhancement 4: fuzzy. Enhancement 5: markup_percent."""
     account_cookie = request.cookies.get(COOKIE_ACCOUNT)
     account_id = get_account_id_from_cookie(account_cookie)
     if not account_id:
@@ -318,7 +347,9 @@ async def api_sync(
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
     only_increase = only_increase_cost and str(only_increase_cost).strip().lower() in ("true", "1", "yes")
-    result = await asyncio.to_thread(run_sync, account_id, rows, only_increase)
+    fuzzy_on, fuzzy_t = _parse_fuzzy_form(fuzzy_match, fuzzy_threshold)
+    markup = _parse_markup_percent(markup_percent)
+    result = await asyncio.to_thread(run_sync, account_id, rows, only_increase, fuzzy_on, fuzzy_t, markup)
     if result.get("error") and result["updated"] == 0 and not result.get("skus_not_found"):
         return JSONResponse(status_code=403, content=result)
     return result
